@@ -28,7 +28,7 @@ class LogoutCommand extends BaseCommand
             return;
         }
 
-        $response = $this->createHttpClient()->delete("$this->endpoint/auth/logout");
+        $response = $this->createHttpClient()->delete("$this->endpoint/logout");
 
         if ($response->failed()) {
             error($response->json('message'));

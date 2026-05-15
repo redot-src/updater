@@ -28,7 +28,7 @@ class LoginCommand extends BaseCommand
         $email = text('Enter your email address', required: true, placeholder: 'john@doe.com', validate: fn ($value) => filter_var($value, FILTER_VALIDATE_EMAIL) ? null : 'Invalid email address');
         $password = password('Enter your password', required: true, placeholder: '********', validate: fn ($value) => strlen($value) >= 8 ? null : 'Password must be at least 8 characters long');
 
-        $response = $this->createHttpClient()->post("$this->endpoint/auth/login", [
+        $response = $this->createHttpClient()->post("$this->endpoint/login", [
             'email' => $email,
             'password' => $password,
         ]);
