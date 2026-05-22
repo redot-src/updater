@@ -54,7 +54,7 @@ abstract class BaseCommand extends Command
 
         $credentials = json_decode(File::get($file), true);
 
-        $this->token = $credentials['token'];
+        $this->token = decrypt($credentials['token']);
         $this->project = $credentials['project'];
     }
 
@@ -64,7 +64,7 @@ abstract class BaseCommand extends Command
     protected function saveCredentials()
     {
         $credentials = [
-            'token' => $this->token,
+            'token' => encrypt($this->token),
             'project' => $this->project,
         ];
 
