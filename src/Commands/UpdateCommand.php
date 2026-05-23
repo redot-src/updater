@@ -10,6 +10,7 @@ use ZipArchive;
 use function Laravel\Prompts\error;
 use function Laravel\Prompts\info;
 use function Laravel\Prompts\spin;
+use function Laravel\Prompts\warning;
 
 class UpdateCommand extends BaseCommand
 {
@@ -85,12 +86,12 @@ class UpdateCommand extends BaseCommand
         }
 
         // Download both snapshots (stream to disk with no timeout for large files)
-        spin(fn() => Http::withoutVerifying()->timeout(0)->sink($baseZip)->get($baseDownload), 'Downloading base snapshot...');
-        spin(fn() => Http::withoutVerifying()->timeout(0)->sink($latestZip)->get($latestDownload), 'Downloading latest snapshot...');
+        spin(fn () => Http::withoutVerifying()->timeout(0)->sink($baseZip)->get($baseDownload), 'Downloading base snapshot...');
+        spin(fn () => Http::withoutVerifying()->timeout(0)->sink($latestZip)->get($latestDownload), 'Downloading latest snapshot...');
 
         // Unarchive both
-        spin(fn() => $this->unarchive($baseZip, $basePath), 'Unarchiving base snapshot...');
-        spin(fn() => $this->unarchive($latestZip, $latestPath), 'Unarchiving latest snapshot...');
+        spin(fn () => $this->unarchive($baseZip, $basePath), 'Unarchiving base snapshot...');
+        spin(fn () => $this->unarchive($latestZip, $latestPath), 'Unarchiving latest snapshot...');
 
         // 3-way merge per file into the staging dir; project tree is untouched until the apply step
         $writes = [];
@@ -107,12 +108,12 @@ class UpdateCommand extends BaseCommand
         if (! empty($conflicts) && ! $force) {
             error(sprintf('Aborted: merge conflicts in %d file(s). No files were modified.', count($conflicts)));
             foreach ($conflicts as $path) {
-                $this->line("  <fg=red>{$path}</>");
+                $this->badgeLine('red', 'conflict', $path);
             }
-            $this->line('Re-run with <fg=cyan>--force</> to write conflict markers into these files,');
-            $this->line('or open <fg=cyan>https://redot.dev/projects/' . $this->project . '/diff</> to merge manually.');
+            warning('Re-run with --force to write conflict markers into these files,');
+            warning('or open https://redot.dev/projects/' . $this->project . '/diff to merge manually.');
 
-            spin(fn() => $this->cleanUp(), 'Cleaning up...');
+            spin(fn () => $this->cleanUp(), 'Cleaning up...');
 
             return 1;
         }
@@ -128,14 +129,14 @@ class UpdateCommand extends BaseCommand
             File::delete(base_path($relative));
         }
 
-        spin(fn() => $this->cleanUp(), 'Cleaning up...');
+        spin(fn () => $this->cleanUp(), 'Cleaning up...');
 
         if (! empty($conflicts)) {
             error(sprintf('Merge complete with %d conflict(s):', count($conflicts)));
             foreach ($conflicts as $path) {
-                $this->line("  <fg=red>{$path}</>");
+                $this->badgeLine('red', 'conflict', $path);
             }
-            $this->line('Open each file, resolve the <fg=red><<<<<<<</> markers, and commit. No need to re-run.');
+            warning('Open each file, resolve the <<<<<<< markers, and commit. No need to re-run.');
 
             return 1;
         }
@@ -217,24 +218,34 @@ class UpdateCommand extends BaseCommand
 
             case 'modified':
             case 'renamed':
-                $oursPath = File::exists($ours) ? $ours : $this->emptyTempFile();
+                if (! File::exists($ours)) {
+                    File::ensureDirectoryExists(dirname($staged));
+                    File::copy($theirs, $staged);
+                    $writes[$relative] = $staged;
+                    $this->logOperation('added', $relative);
+
+                    return;
+                }
 
                 $result = Process::run([
                     'git',
                     'merge-file',
                     '-p',
                     '--marker-size=7',
-                    $oursPath,
+                    $ours,
                     $basefile,
                     $theirs,
                 ]);
 
-                // Binary or otherwise unmergeable: empty stdout + nonzero exit -> copy theirs.
+                // git merge-file refuses binary inputs; stderr is the reliable signal.
                 if ($result->output() === '' && $result->exitCode() !== 0) {
                     File::ensureDirectoryExists(dirname($staged));
                     File::copy($theirs, $staged);
                     $writes[$relative] = $staged;
-                    $this->logOperation('binary', $relative);
+                    $this->logOperation(
+                        $result->seeInErrorOutput('Cannot merge binary files') ? 'binary' : $file['status'],
+                        $relative,
+                    );
 
                     return;
                 }
@@ -272,18 +283,17 @@ class UpdateCommand extends BaseCommand
      */
     protected function logOperation(string $status, string $filename): void
     {
-        $color = match ($status) {
+        $bg = match ($status) {
             'added' => 'green',
             'removed' => 'red',
             'modified' => 'yellow',
-            'renamed' => 'blue',
-            'conflict' => 'red',
-            'binary' => 'magenta',
-            default => 'gray',
+            'renamed' => 'bright-blue',
+            'conflict' => 'bright-red',
+            'binary' => 'bright-magenta',
+            default => 'bright-black',
         };
 
-        $label = str_pad($status, 9);
-        $this->line("  <fg={$color}>{$label}</> {$filename}");
+        $this->badgeLine($bg, $status, $filename);
     }
 
     /**

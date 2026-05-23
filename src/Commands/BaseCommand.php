@@ -101,4 +101,32 @@ abstract class BaseCommand extends Command
 
         return $client;
     }
+
+    /**
+     * Print a line with a Pest-style badge label and trailing text.
+     */
+    protected function badgeLine(string $bg, string $label, string $text): void
+    {
+        $badge = str_pad(strtoupper($label), 10, ' ', STR_PAD_BOTH);
+
+        $this->line(sprintf(
+            '<fg=%s;bg=%s;options=bold>%s</><fg=default> %s</>',
+            $this->contrastForeground($bg),
+            $bg,
+            $badge,
+            $text,
+        ));
+    }
+
+    /**
+     * Pick a readable foreground color for a badge background.
+     */
+    protected function contrastForeground(string $background): string
+    {
+        return match ($background) {
+            'blue', 'bright-blue', 'magenta', 'bright-magenta', 'gray', 'bright-black', 'black' => 'white',
+            'red', 'bright-red' => 'default',
+            default => 'black',
+        };
+    }
 }
