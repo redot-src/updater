@@ -61,8 +61,8 @@ class UpdateCommand extends BaseCommand
             return;
         }
 
-        // Download dashboard
-        spin(fn () => File::put($zipPath, Http::get($download)->body()), 'Downloading dashboard...');
+        // Download dashboard (stream to disk with no timeout for large files)
+        spin(fn () => Http::withoutVerifying()->timeout(0)->sink($zipPath)->get($download), 'Downloading dashboard...');
 
         // Unarchive dashboard
         spin(fn () => $this->unarchive($zipPath, $path), 'Unarchiving dashboard...');
