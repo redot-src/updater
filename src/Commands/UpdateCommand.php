@@ -67,8 +67,8 @@ class UpdateCommand extends BaseCommand
         // Unarchive dashboard
         spin(fn () => $this->unarchive($zipPath, $path), 'Unarchiving dashboard...');
 
-        // Apply diff
-        spin(fn () => array_map(fn ($file) => $this->applyFileDiff($file, $path), $response->json('payload.files')), 'Applying diff...');
+        // Apply diff (each operation is logged to the terminal)
+        array_map(fn ($file) => $this->applyFileDiff($file, $path), $response->json('payload.files'));
 
         // Clean up
         spin(fn () => $this->cleanUp(), 'Cleaning up...');
@@ -115,8 +115,10 @@ class UpdateCommand extends BaseCommand
             File::delete($destination);
         }
 
-        // If file is removed, skip
+        // If file is removed, log and skip the copy step
         if ($file['status'] === 'removed') {
+            $this->logOperation('removed', $file['filename']);
+
             return;
         }
 
@@ -125,6 +127,25 @@ class UpdateCommand extends BaseCommand
 
         // Copy file to destination
         File::copy($source, $destination);
+
+        $this->logOperation($file['status'], $file['filename']);
+    }
+
+    /**
+     * Log a single file operation to the terminal with a color-coded label.
+     */
+    protected function logOperation(string $status, string $filename): void
+    {
+        $color = match ($status) {
+            'added' => 'green',
+            'removed' => 'red',
+            'modified' => 'yellow',
+            'renamed' => 'blue',
+            default => 'gray',
+        };
+
+        $label = str_pad($status, 9);
+        $this->line("  <fg={$color}>{$label}</> {$filename}");
     }
 
     /**
