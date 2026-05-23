@@ -63,15 +63,31 @@ Update your project to the latest Redot scaffold:
 php artisan redot:update
 ```
 
-This command will download and apply the latest updates from the Redot scaffold to your project.
+This command performs a **git-style 3-way merge**. It downloads two scaffold snapshots — your current commit (the "base") and the latest (the "incoming") — and merges each changed file against the version in your project using `git merge-file`. Files you have not touched update cleanly; files you have customized are merged with your changes preserved when possible.
+
+**Atomic behavior**
+
+By default, if any file conflicts during the merge, the command aborts and **no files in your project are modified**. It prints the conflicted paths and exits non-zero so you can decide how to proceed.
+
+**Force mode**
+
+To apply the merge anyway and have conflict markers written into the affected files (the same `<<<<<<<` / `=======` / `>>>>>>>` markers `git merge` produces), pass `--force`:
+
+```bash
+php artisan redot:update --force
+```
+
+In this mode, conflicted files are written into your project with the merge markers in place. Open each file, resolve the markers, and commit. **You do not need to re-run `redot:update` afterwards** — the merge is already applied.
 
 **Commit Changes**
 
-Before running the update command, you should commit all your changes and review each file manually to make sure you're not missing anything, as the update command will overwrite your files with the latest scaffold.
+Even with the 3-way merge in place, it is still good practice to commit (or stash) your local changes before running the update command, so you can review the resulting diff and roll back if needed.
 
 ## Limitations
 
-⚠️ **Important Limitation**: The updater currently **cannot update files in the `.github` directory**. You will need to manually manage any changes to GitHub workflow files, actions, or other `.github` directory contents.
+⚠️ **Requires `git`**: The update command shells out to `git merge-file` for the 3-way merge, so the `git` binary must be on your `PATH`. Your project itself does not need to be a git repository.
+
+⚠️ **Binary files are not merged**: `git merge-file` only handles text. When a binary file changes upstream, the incoming version replaces your copy (logged as `binary`). Back up any binaries you have customized before updating.
 
 ## Contributing
 
