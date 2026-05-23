@@ -5,7 +5,6 @@ namespace Redot\Updater\Commands;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Process;
-use ZipArchive;
 
 use function Laravel\Prompts\error;
 use function Laravel\Prompts\info;
@@ -28,9 +27,50 @@ class UpdateCommand extends BaseCommand
     protected $description = 'Update this project codebase to the latest redot dashboard version';
 
     /**
-     * Handle the command
+     * Pending file writes: relative path => absolute path inside the staging dir.
+     *
+     * @var array<string,string>
      */
-    public function handle()
+    protected array $writes = [];
+
+    /**
+     * Pending file deletions, as project-relative paths.
+     *
+     * @var array<int,string>
+     */
+    protected array $deletes = [];
+
+    /**
+     * Files that produced merge conflicts, as project-relative paths.
+     *
+     * @var array<int,string>
+     */
+    protected array $conflicts = [];
+
+    /**
+     * Scratch directory root for this run.
+     */
+    protected string $tmpPath;
+
+    /**
+     * Extracted base snapshot (user's current commit).
+     */
+    protected string $basefilesPath;
+
+    /**
+     * Extracted latest snapshot (HEAD).
+     */
+    protected string $theirsPath;
+
+    /**
+     * Staging directory where merge results are written before being applied.
+     */
+    protected string $stagingPath;
+
+    /**
+     * Handle the command.
+     */
+    public function handle(): int
     {
         if (Process::run(['git', '--version'])->failed()) {
             error('git is required for redot:update but was not found on PATH.');
@@ -38,250 +78,278 @@ class UpdateCommand extends BaseCommand
             return 1;
         }
 
-        $this->cleanUp();
+        $this->clean();
+        $this->initialisePaths();
 
-        // Define paths
-        $tmpPath = $this->basePath . '/tmp';
-        $baseZip = $tmpPath . '/base.zip';
-        $latestZip = $tmpPath . '/latest.zip';
-        $basePath = $tmpPath . '/base';
-        $latestPath = $tmpPath . '/latest';
-        $stagingPath = $tmpPath . '/merged';
+        $baseDownload = $this->fetchDownloadUrl();
+        $latestDownload = $this->fetchDownloadUrl('HEAD');
+        $diff = $this->fetchDiff();
 
-        File::ensureDirectoryExists($tmpPath);
-        File::ensureDirectoryExists($stagingPath);
-
-        // Resolve base download URL (user's current commit, no commit param)
-        $baseEndpoint = "$this->endpoint/projects/$this->project/download";
-        $baseResponse = $this->createHttpClient()->get($baseEndpoint);
-
-        if ($baseResponse->failed()) {
-            error($baseResponse->json('message'));
-
+        if ($baseDownload === null || $latestDownload === null || $diff === null) {
             return 1;
         }
 
-        $baseDownload = $baseResponse->json('payload.download');
+        $this->prepareSnapshot($baseDownload, 'base', $this->basefilesPath);
+        $this->prepareSnapshot($latestDownload, 'latest', $this->theirsPath);
 
-        // Resolve latest download URL (commit=HEAD)
-        $latestEndpoint = "$this->endpoint/projects/$this->project/download?commit=HEAD";
-        $latestResponse = $this->createHttpClient()->get($latestEndpoint);
-
-        if ($latestResponse->failed()) {
-            error($latestResponse->json('message'));
-
-            return 1;
-        }
-
-        $latestDownload = $latestResponse->json('payload.download');
-
-        // Resolve diff (still drives the per-file merge plan)
-        $diffEndpoint = "$this->endpoint/projects/$this->project/diff";
-        $diffResponse = $this->createHttpClient()->get($diffEndpoint);
-
-        if ($diffResponse->failed()) {
-            error($diffResponse->json('message'));
-
-            return 1;
-        }
-
-        // Download both snapshots (stream to disk with no timeout for large files)
-        spin(fn () => Http::withoutVerifying()->timeout(0)->sink($baseZip)->get($baseDownload), 'Downloading base snapshot...');
-        spin(fn () => Http::withoutVerifying()->timeout(0)->sink($latestZip)->get($latestDownload), 'Downloading latest snapshot...');
-
-        // Unarchive both
-        spin(fn () => $this->unarchive($baseZip, $basePath), 'Unarchiving base snapshot...');
-        spin(fn () => $this->unarchive($latestZip, $latestPath), 'Unarchiving latest snapshot...');
-
-        // 3-way merge per file into the staging dir; project tree is untouched until the apply step
-        $writes = [];
-        $deletes = [];
-        $conflicts = [];
-
-        foreach ($diffResponse->json('payload.files') as $file) {
-            $this->mergeFile($file, $basePath, $latestPath, $stagingPath, $writes, $deletes, $conflicts);
+        foreach ($diff['files'] as $file) {
+            $this->mergeFile($file);
         }
 
         $force = (bool) $this->option('force');
 
-        // Atomic abort: conflicts present and --force not set
-        if (! empty($conflicts) && ! $force) {
-            error(sprintf('Aborted: merge conflicts in %d file(s). No files were modified.', count($conflicts)));
-            foreach ($conflicts as $path) {
-                $this->badgeLine('red', 'conflict', $path);
-            }
-            warning('Re-run with --force to write conflict markers into these files,');
-            warning('or open https://redot.dev/projects/' . $this->project . '/diff to merge manually.');
-
-            spin(fn () => $this->cleanUp(), 'Cleaning up...');
+        if (! empty($this->conflicts) && ! $force) {
+            $this->reportConflictAbort();
+            spin(fn() => $this->clean(), 'Cleaning up...');
 
             return 1;
         }
 
-        // Apply staging -> project (only point at which the user's tree is mutated)
-        foreach ($writes as $relative => $stagedAbs) {
-            $dest = base_path($relative);
-            File::ensureDirectoryExists(dirname($dest));
-            File::copy($stagedAbs, $dest);
-        }
+        $this->applyStaged();
+        spin(fn() => $this->clean(), 'Cleaning up...');
 
-        foreach ($deletes as $relative) {
-            File::delete(base_path($relative));
-        }
-
-        spin(fn () => $this->cleanUp(), 'Cleaning up...');
-
-        if (! empty($conflicts)) {
-            error(sprintf('Merge complete with %d conflict(s):', count($conflicts)));
-            foreach ($conflicts as $path) {
-                $this->badgeLine('red', 'conflict', $path);
-            }
-            warning('Open each file, resolve the <<<<<<< markers, and commit. No need to re-run.');
+        if (! empty($this->conflicts)) {
+            $this->reportConflictsApplied();
 
             return 1;
         }
 
         info('Dashboard updated successfully');
+
+        return 0;
     }
 
     /**
-     * Unarchive the zip file. The downloaded zip contains a single top-level
-     * directory; symlink that directory to the requested destination so callers
-     * can address files via $destination/$relative regardless of the archive's
-     * inner folder name.
+     * Resolve the scratch paths used during the update and ensure they exist.
      */
-    protected function unarchive(string $path, string $destination)
+    protected function initialisePaths(): void
     {
-        $tmpPath = sprintf('%s/tmp/tmp-%s', $this->basePath, uniqid());
+        $this->tmpPath = $this->basePath . '/tmp';
+        $this->basefilesPath = $this->tmpPath . '/base';
+        $this->theirsPath = $this->tmpPath . '/latest';
+        $this->stagingPath = $this->tmpPath . '/merged';
 
-        $zip = new ZipArchive;
-        $zip->open($path);
-        $zip->extractTo($tmpPath);
-        $zip->close();
-
-        $directories = File::directories($tmpPath);
-        File::link($directories[0], $destination);
+        File::ensureDirectoryExists($this->tmpPath);
+        File::ensureDirectoryExists($this->stagingPath);
     }
 
     /**
-     * Run a 3-way merge for a single diff entry, writing the result into the
-     * staging directory and recording writes/deletes/conflicts by reference.
-     *
-     * @param  array<string,string>  $writes
-     * @param  array<int,string>  $deletes
-     * @param  array<int,string>  $conflicts
+     * Fetch a project download URL. Pass a commit (e.g. "HEAD") to target a
+     * specific revision; omit it to download the user's current commit.
      */
-    protected function mergeFile(
-        array $file,
-        string $basePath,
-        string $latestPath,
-        string $stagingPath,
-        array &$writes,
-        array &$deletes,
-        array &$conflicts,
-    ): void {
-        // Skip github files [Hotfix]
+    protected function fetchDownloadUrl(?string $commit = null): ?string
+    {
+        $url = "$this->endpoint/projects/$this->project/download";
+
+        if ($commit !== null) {
+            $url .= "?commit=$commit";
+        }
+
+        $response = $this->createHttpClient()->get($url);
+
+        if ($response->failed()) {
+            error($response->json('message'));
+
+            return null;
+        }
+
+        return $response->json('payload.download');
+    }
+
+    /**
+     * Fetch the diff payload that drives the per-file merge plan.
+     *
+     * @return array<string,mixed>|null
+     */
+    protected function fetchDiff(): ?array
+    {
+        $response = $this->createHttpClient()->get("$this->endpoint/projects/$this->project/diff");
+
+        if ($response->failed()) {
+            error($response->json('message'));
+
+            return null;
+        }
+
+        return $response->json('payload');
+    }
+
+    /**
+     * Download a snapshot zip and unarchive it to the given destination.
+     */
+    protected function prepareSnapshot(string $url, string $label, string $destination): void
+    {
+        $zipPath = $this->tmpPath . "/$label.zip";
+
+        spin(
+            fn() => Http::withoutVerifying()->timeout(0)->sink($zipPath)->get($url),
+            "Downloading $label snapshot...",
+        );
+
+        spin(
+            fn() => $this->unarchive($zipPath, $destination),
+            "Unarchiving $label snapshot...",
+        );
+    }
+
+    /**
+     * Run a 3-way merge for a single diff entry and record the outcome in
+     * $writes / $deletes / $conflicts. The project tree is not touched here.
+     *
+     * @param  array<string,string>  $file
+     */
+    protected function mergeFile(array $file): void
+    {
+        // Skip github files
         if (str_starts_with($file['filename'], '.github')) {
             return;
         }
 
         $relative = $file['filename'];
-        $basefile = $basePath . '/' . $relative;
-        $theirs = $latestPath . '/' . $relative;
+        $status = $file['status'];
+        $basefile = $this->basefilesPath . '/' . $relative;
+        $theirs = $this->theirsPath . '/' . $relative;
         $ours = base_path($relative);
-        $staged = $stagingPath . '/' . $relative;
+        $staged = $this->stagingPath . '/' . $relative;
 
-        switch ($file['status']) {
-            case 'removed':
-                if (! File::exists($ours) || File::hash($ours) === File::hash($basefile)) {
-                    $deletes[] = $relative;
-                    $this->logOperation('removed', $relative);
-                } else {
-                    $conflicts[] = $relative;
-                    $this->logOperation('conflict', $relative);
-                }
+        if ($status === 'removed') {
+            $this->mergeRemoved($relative, $ours, $basefile);
 
-                return;
+            return;
+        }
 
-            case 'added':
-                if (! File::exists($ours)) {
-                    File::ensureDirectoryExists(dirname($staged));
-                    File::copy($theirs, $staged);
-                    $writes[$relative] = $staged;
-                    $this->logOperation('added', $relative);
+        if (! in_array($status, ['added', 'modified', 'renamed'], true)) {
+            return;
+        }
 
-                    return;
-                }
-                // Both sides "added" the file: merge against an empty base.
-                $basefile = $this->emptyTempFile();
-                // no break - intentional fall-through to the merge path
+        if (! File::exists($ours)) {
+            $this->stageCopy($relative, $theirs, $staged, 'added');
 
-            case 'modified':
-            case 'renamed':
-                if (! File::exists($ours)) {
-                    File::ensureDirectoryExists(dirname($staged));
-                    File::copy($theirs, $staged);
-                    $writes[$relative] = $staged;
-                    $this->logOperation('added', $relative);
+            return;
+        }
 
-                    return;
-                }
+        // Both sides "added" the file: merge against an empty base.
+        if ($status === 'added') {
+            $basefile = $this->emptyTempFile();
+        }
 
-                $result = Process::run([
-                    'git',
-                    'merge-file',
-                    '-p',
-                    '--marker-size=7',
-                    $ours,
-                    $basefile,
-                    $theirs,
-                ]);
+        $this->threeWayMerge($relative, $ours, $basefile, $theirs, $staged, $status);
+    }
 
-                // git merge-file refuses binary inputs; stderr is the reliable signal.
-                if ($result->output() === '' && $result->exitCode() !== 0) {
-                    File::ensureDirectoryExists(dirname($staged));
-                    File::copy($theirs, $staged);
-                    $writes[$relative] = $staged;
-                    $this->logOperation(
-                        $result->seeInErrorOutput('Cannot merge binary files') ? 'binary' : $file['status'],
-                        $relative,
-                    );
+    /**
+     * Handle a 'removed' diff entry. The deletion is recorded only when the
+     * local file matches the base; otherwise the user has diverging changes
+     * and we surface a conflict.
+     */
+    protected function mergeRemoved(string $relative, string $ours, string $basefile): void
+    {
+        $unchanged = ! File::exists($ours) || File::hash($ours) === File::hash($basefile);
 
-                    return;
-                }
+        if ($unchanged) {
+            $this->deletes[] = $relative;
+            $this->log('removed', $relative);
 
-                File::ensureDirectoryExists(dirname($staged));
-                File::put($staged, $result->output());
-                $writes[$relative] = $staged;
+            return;
+        }
 
-                if ($result->exitCode() === 0) {
-                    $this->logOperation($file['status'], $relative);
-                } else {
-                    $conflicts[] = $relative;
-                    $this->logOperation('conflict', $relative);
-                }
+        $this->conflicts[] = $relative;
+        $this->log('conflict', $relative);
+    }
 
-                return;
+    /**
+     * Copy a source file into the staging directory and record the write.
+     */
+    protected function stageCopy(string $relative, string $source, string $staged, string $status): void
+    {
+        File::ensureDirectoryExists(dirname($staged));
+        File::copy($source, $staged);
+
+        $this->writes[$relative] = $staged;
+        $this->log($status, $relative);
+    }
+
+    /**
+     * Run `git merge-file` between $ours, $basefile and $theirs and stage the
+     * result. Binary inputs (which git refuses) fall back to a "take theirs"
+     * copy. Non-clean merges add the path to the conflicts list.
+     */
+    protected function threeWayMerge(string $relative, string $ours, string $basefile, string $theirs, string $staged, string $status): void
+    {
+        $result = Process::run(['git', 'merge-file', '-p', '--marker-size=7', $ours, $basefile, $theirs]);
+
+        // git merge-file refuses binary inputs; an empty stdout with a non-zero exit signals failure.
+        if ($result->output() === '' && $result->exitCode() !== 0) {
+            $logStatus = $result->seeInErrorOutput('Cannot merge binary files') ? 'binary' : $status;
+            $this->stageCopy($relative, $theirs, $staged, $logStatus);
+
+            return;
+        }
+
+        File::ensureDirectoryExists(dirname($staged));
+        File::put($staged, $result->output());
+        $this->writes[$relative] = $staged;
+
+        if ($result->exitCode() === 0) {
+            $this->log($status, $relative);
+
+            return;
+        }
+
+        $this->conflicts[] = $relative;
+        $this->log('conflict', $relative);
+    }
+
+    /**
+     * Apply the staged writes and deletes to the project tree. This is the
+     * only point at which the user's files are mutated.
+     */
+    protected function applyStaged(): void
+    {
+        foreach ($this->writes as $relative => $stagedAbs) {
+            $dest = base_path($relative);
+            File::ensureDirectoryExists(dirname($dest));
+            File::copy($stagedAbs, $dest);
+        }
+
+        foreach ($this->deletes as $relative) {
+            File::delete(base_path($relative));
         }
     }
 
     /**
-     * Create a temporary empty file usable as a synthetic merge base.
+     * Report that conflicts were detected and the merge was aborted.
      */
-    protected function emptyTempFile(): string
+    protected function reportConflictAbort(): void
     {
-        $path = $this->basePath . '/tmp/empty-' . uniqid();
+        error(sprintf('Aborted: merge conflicts in %d file(s). No files were modified.', count($this->conflicts)));
 
-        File::ensureDirectoryExists(dirname($path));
-        File::put($path, '');
+        foreach ($this->conflicts as $path) {
+            $this->badgeLine('red', 'conflict', $path);
+        }
 
-        return $path;
+        warning('Re-run with --force to write conflict markers into these files,');
+        warning('or open https://redot.dev/projects/' . $this->project . '/diff to merge manually.');
+    }
+
+    /**
+     * Report that the merge was applied with --force and conflict markers were
+     * written into the affected files.
+     */
+    protected function reportConflictsApplied(): void
+    {
+        error(sprintf('Merge complete with %d conflict(s):', count($this->conflicts)));
+
+        foreach ($this->conflicts as $path) {
+            $this->badgeLine('red', 'conflict', $path);
+        }
+
+        warning('Open each file, resolve the <<<<<<< markers, and commit. No need to re-run.');
     }
 
     /**
      * Log a single file operation to the terminal with a color-coded label.
      */
-    protected function logOperation(string $status, string $filename): void
+    protected function log(string $status, string $filename): void
     {
         $bg = match ($status) {
             'added' => 'green',
@@ -297,9 +365,9 @@ class UpdateCommand extends BaseCommand
     }
 
     /**
-     * Clean up the temporary files
+     * Clean up the temporary files.
      */
-    protected function cleanUp()
+    protected function clean(): void
     {
         File::deleteDirectory($this->basePath . '/tmp');
     }

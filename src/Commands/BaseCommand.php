@@ -6,6 +6,7 @@ use Illuminate\Console\Command;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Http;
+use ZipArchive;
 
 abstract class BaseCommand extends Command
 {
@@ -105,28 +106,52 @@ abstract class BaseCommand extends Command
     /**
      * Print a line with a Pest-style badge label and trailing text.
      */
-    protected function badgeLine(string $bg, string $label, string $text): void
+    protected function badgeLine(string $bg, string $label, string $text, int $padding = 10): void
     {
-        $badge = str_pad(strtoupper($label), 10, ' ', STR_PAD_BOTH);
+        $fg = match ($bg) {
+            'blue', 'bright-blue', 'magenta', 'bright-magenta', 'gray', 'bright-black', 'black' => 'white',
+            'red', 'bright-red' => 'default',
+            default => 'black',
+        };
 
         $this->line(sprintf(
             '<fg=%s;bg=%s;options=bold>%s</><fg=default> %s</>',
-            $this->contrastForeground($bg),
+            $fg,
             $bg,
-            $badge,
+            str_pad(strtoupper($label), $padding, ' ', STR_PAD_BOTH),
             $text,
         ));
     }
 
     /**
-     * Pick a readable foreground color for a badge background.
+     * Unarchive the zip file. The downloaded zip contains a single top-level
+     * directory; symlink that directory to the requested destination so callers
+     * can address files via $destination/$relative regardless of the archive's
+     * inner folder name.
      */
-    protected function contrastForeground(string $background): string
+    protected function unarchive(string $path, string $destination): void
     {
-        return match ($background) {
-            'blue', 'bright-blue', 'magenta', 'bright-magenta', 'gray', 'bright-black', 'black' => 'white',
-            'red', 'bright-red' => 'default',
-            default => 'black',
-        };
+        $tmpPath = sprintf('%s/tmp/tmp-%s', $this->basePath, uniqid());
+
+        $zip = new ZipArchive;
+        $zip->open($path);
+        $zip->extractTo($tmpPath);
+        $zip->close();
+
+        $directories = File::directories($tmpPath);
+        File::link($directories[0], $destination);
+    }
+
+    /**
+     * Create a temporary empty file usable as a synthetic merge base.
+     */
+    protected function emptyTempFile(): string
+    {
+        $path = $this->basePath . '/tmp/empty-' . uniqid();
+
+        File::ensureDirectoryExists(dirname($path));
+        File::put($path, '');
+
+        return $path;
     }
 }
