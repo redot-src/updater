@@ -18,7 +18,7 @@ class UpdateCommand extends BaseCommand
      */
     protected $signature = '
         redot:update
-        {--force : Apply the merge even when conflicts exist, writing conflict markers into the affected files}
+        {--dry : Preview the merge plan without modifying any files}
     ';
 
     /**
@@ -96,13 +96,11 @@ class UpdateCommand extends BaseCommand
             $this->mergeFile($file);
         }
 
-        $force = (bool) $this->option('force');
-
-        if (! empty($this->conflicts) && ! $force) {
-            $this->reportConflictAbort();
+        if ((bool) $this->option('dry')) {
+            $this->reportDryRun();
             spin(fn() => $this->clean(), 'Cleaning up...');
 
-            return 1;
+            return empty($this->conflicts) ? 0 : 1;
         }
 
         $this->applyStaged();
@@ -317,23 +315,34 @@ class UpdateCommand extends BaseCommand
     }
 
     /**
-     * Report that conflicts were detected and the merge was aborted.
+     * Report the merge plan for a dry run without touching the project tree.
      */
-    protected function reportConflictAbort(): void
+    protected function reportDryRun(): void
     {
-        error(sprintf('Aborted: merge conflicts in %d file(s). No files were modified.', count($this->conflicts)));
+        info(sprintf(
+            'Dry run: %d write(s), %d delete(s), %d conflict(s). No files were modified.',
+            count($this->writes),
+            count($this->deletes),
+            count($this->conflicts),
+        ));
 
         foreach ($this->conflicts as $path) {
             $this->badgeLine('red', 'conflict', $path);
         }
 
-        warning('Re-run with --force to write conflict markers into these files,');
+        if (empty($this->conflicts)) {
+            warning('Re-run without --dry to apply the merge.');
+
+            return;
+        }
+
+        warning('Re-run without --dry to apply the merge; conflict markers will be written into the files above,');
         warning('or open https://redot.dev/projects/' . $this->project . '/diff to merge manually.');
     }
 
     /**
-     * Report that the merge was applied with --force and conflict markers were
-     * written into the affected files.
+     * Report that the merge was applied and conflict markers were written into
+     * the affected files.
      */
     protected function reportConflictsApplied(): void
     {
