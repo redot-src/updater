@@ -79,13 +79,33 @@ php artisan redot:update --dry
 
 This prints what would be written, deleted, or conflicted and exits without touching your project. Re-run without `--dry` to apply the merge.
 
+**Resolving conflicts in your editor**
+
+When your project is a git repository, conflicted files are also recorded as **unmerged entries in the git index** (the same stage 1/2/3 state a real `git merge` leaves behind). This makes editors treat them as genuine merge conflicts rather than plain modified files:
+
+- In **VS Code** they appear under **Source Control → Merge Changes**, and opening one launches the built-in 3-way **Merge Editor** with _Accept Current / Accept Incoming / Accept Both_ actions.
+- `git status` reports them as unmerged (`UU`, or `DU` when the file was deleted upstream).
+- The inline `<<<<<<<` / `=======` / `>>>>>>>` markers are still written to the file, so the CodeLens conflict bar works too — and editors without git integration fall back to those markers.
+
+How it maps the three sides into the index:
+
+| Stage | Side | Source |
+| ----- | ---- | ------ |
+| 1 | base | the scaffold version at your current commit |
+| 2 | ours | your project's file before the merge |
+| 3 | theirs | the latest incoming scaffold version (absent when the file was deleted upstream) |
+
+Resolve each file as you normally would, then `git add` it to clear the unmerged state and commit. There is **no need to re-run `redot:update`** — the merge is already applied.
+
+This step is best-effort: if the project is not a git repository (or a git command fails), the conflict markers in the files remain the source of truth and the update still completes.
+
 **Commit Changes**
 
 Even with the 3-way merge in place, it is still good practice to commit (or stash) your local changes before running the update command, so you can review the resulting diff and roll back if needed.
 
 ## Limitations
 
-⚠️ **Requires `git`**: The update command shells out to `git merge-file` for the 3-way merge, so the `git` binary must be on your `PATH`. Your project itself does not need to be a git repository.
+⚠️ **Requires `git`**: The update command shells out to `git merge-file` for the 3-way merge, so the `git` binary must be on your `PATH`. Your project itself does not need to be a git repository — but if it is one, conflicts are additionally surfaced in your editor's Source Control view (see [Resolving conflicts in your editor](#4-update-project)).
 
 ⚠️ **Binary files are not merged**: `git merge-file` only handles text. When a binary file changes upstream, the incoming version replaces your copy (logged as `binary`). Back up any binaries you have customized before updating.
 
