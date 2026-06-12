@@ -2,13 +2,18 @@
 
 namespace Redot\Updater\Commands;
 
+use Illuminate\Console\Command;
+use Redot\Updater\Api\RedotApiException;
+use Redot\Updater\Api\RedotClient;
+use Redot\Updater\Auth\CredentialStore;
+
 use function Laravel\Prompts\error;
 use function Laravel\Prompts\info;
 use function Laravel\Prompts\password;
 use function Laravel\Prompts\select;
 use function Laravel\Prompts\text;
 
-class LoginCommand extends BaseCommand
+class LoginCommand extends Command
 {
     /**
      * The console command name.
@@ -21,49 +26,38 @@ class LoginCommand extends BaseCommand
     protected $description = 'Login to redot.dev to grab the API key';
 
     /**
-     * Handle the command
+     * Handle the command.
      */
-    public function handle()
+    public function handle(RedotClient $api, CredentialStore $credentials): int
     {
         $email = text('Enter your email address', required: true, placeholder: 'john@doe.com', validate: fn ($value) => filter_var($value, FILTER_VALIDATE_EMAIL) ? null : 'Invalid email address');
         $password = password('Enter your password', required: true, placeholder: '********', validate: fn ($value) => strlen($value) >= 8 ? null : 'Password must be at least 8 characters long');
 
-        $response = $this->createHttpClient()->post("$this->endpoint/login", [
-            'email' => $email,
-            'password' => $password,
-        ]);
+        try {
+            $credentials->setToken($api->login($email, $password));
 
-        if ($response->failed()) {
-            error($response->json('message'));
+            info('Logged in successfully, fetching projects...');
 
-            return;
+            $projects = collect($api->projects())->filter(fn ($project) => $project['is_active']);
+        } catch (RedotApiException $e) {
+            error($e->getMessage());
+
+            return 1;
         }
-
-        $this->token = $response->json('payload.token');
-
-        info('Logged in successfully, fetching projects...');
-
-        $response = $this->createHttpClient()->withToken($this->token)->get("$this->endpoint/projects");
-
-        if ($response->failed()) {
-            error($response->json('message'));
-
-            return;
-        }
-
-        $projects = collect($response->json('payload'))->filter(fn ($project) => $project['is_active']);
 
         if ($projects->isEmpty()) {
             error('No active projects found');
 
-            return;
+            return 1;
         }
 
         $projects = $projects->mapWithKeys(fn ($project) => [$project['slug'] => $project['name']])->toArray();
-        $this->project = select('Select a project', $projects, required: true);
 
-        $this->saveCredentials();
+        $credentials->setProject(select('Select a project', $projects, required: true));
+        $credentials->save();
 
         info('Logged in successfully');
+
+        return 0;
     }
 }

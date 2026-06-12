@@ -2,9 +2,12 @@
 
 namespace Redot\Updater\Commands;
 
+use Illuminate\Console\Command;
+use Redot\Updater\Auth\CredentialStore;
+
 use function Laravel\Prompts\info;
 
-class DiffCommand extends BaseCommand
+class DiffCommand extends Command
 {
     /**
      * The console command name.
@@ -17,11 +20,13 @@ class DiffCommand extends BaseCommand
     protected $description = 'Get the diff between the local codebase and the latest redot dashboard version';
 
     /**
-     * Handle the command
+     * Handle the command.
      */
-    public function handle()
+    public function handle(CredentialStore $credentials): int
     {
         info('Open the following URL to see the diff:');
-        info('https://redot.dev/projects/' . $this->project . '/diff');
+        info('https://redot.dev/projects/' . $credentials->project() . '/diff');
+
+        return 0;
     }
 }

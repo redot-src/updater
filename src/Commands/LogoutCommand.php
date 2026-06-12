@@ -2,10 +2,15 @@
 
 namespace Redot\Updater\Commands;
 
+use Illuminate\Console\Command;
+use Redot\Updater\Api\RedotApiException;
+use Redot\Updater\Api\RedotClient;
+use Redot\Updater\Auth\CredentialStore;
+
 use function Laravel\Prompts\error;
 use function Laravel\Prompts\info;
 
-class LogoutCommand extends BaseCommand
+class LogoutCommand extends Command
 {
     /**
      * The console command name.
@@ -18,26 +23,28 @@ class LogoutCommand extends BaseCommand
     protected $description = 'Logout from redot.dev';
 
     /**
-     * Handle the command
+     * Handle the command.
      */
-    public function handle()
+    public function handle(RedotClient $api, CredentialStore $credentials): int
     {
-        if (! $this->hasCredentials()) {
+        if (! $credentials->has()) {
             error('You are not logged in');
 
-            return;
+            return 1;
         }
 
-        $response = $this->createHttpClient()->delete("$this->endpoint/logout");
+        try {
+            $api->logout();
+        } catch (RedotApiException $e) {
+            error($e->getMessage());
 
-        if ($response->failed()) {
-            error($response->json('message'));
-
-            return;
+            return 1;
         }
 
-        $this->removeCredentials();
+        $credentials->forget();
 
         info('Logged out successfully');
+
+        return 0;
     }
 }
