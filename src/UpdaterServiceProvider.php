@@ -15,6 +15,7 @@ class UpdaterServiceProvider extends ServiceProvider
             Commands\LoginCommand::class,
             Commands\LogoutCommand::class,
             Commands\DiffCommand::class,
+            Commands\BumpCommand::class,
             Commands\UpdateCommand::class,
         ]);
     }
