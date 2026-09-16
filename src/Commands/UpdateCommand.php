@@ -226,7 +226,13 @@ class UpdateCommand extends BaseCommand
             return;
         }
 
-        if (! in_array($status, ['added', 'modified', 'renamed'], true)) {
+        if ($status === 'renamed') {
+            $this->mergeRenamed($file);
+
+            return;
+        }
+
+        if (! in_array($status, ['added', 'modified'], true)) {
             return;
         }
 
@@ -242,6 +248,36 @@ class UpdateCommand extends BaseCommand
         }
 
         $this->threeWayMerge($relative, $ours, $basefile, $theirs, $staged, $status);
+    }
+
+    /**
+     * Merge a renamed file from its previous path into its new path, preserving
+     * local changes before removing the previous path.
+     *
+     * @param  array<string,string>  $file
+     */
+    protected function mergeRenamed(array $file): void
+    {
+        $relative = $file['filename'];
+        $previous = $file['previous_filename'];
+        $basefile = $this->basefilesPath . '/' . $previous;
+        $theirs = $this->theirsPath . '/' . $relative;
+        $ours = base_path($previous);
+        $staged = $this->stagingPath . '/' . $relative;
+
+        if (! File::exists($ours)) {
+            $ours = base_path($relative);
+        }
+
+        if (File::exists($ours)) {
+            $this->threeWayMerge($relative, $ours, $basefile, $theirs, $staged, 'renamed');
+        } else {
+            $this->stageCopy($relative, $theirs, $staged, 'renamed');
+        }
+
+        if ($previous !== $relative) {
+            $this->deletes[] = $previous;
+        }
     }
 
     /**
