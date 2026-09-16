@@ -108,13 +108,13 @@ class UpdateCommand extends BaseCommand
 
         if ((bool) $this->option('dry')) {
             $this->reportDryRun();
-            spin(fn() => $this->clean(), 'Cleaning up...');
+            spin(fn () => $this->clean(), 'Cleaning up...');
 
             return empty($this->conflicts) ? 0 : 1;
         }
 
         $this->applyStaged();
-        spin(fn() => $this->clean(), 'Cleaning up...');
+        spin(fn () => $this->clean(), 'Cleaning up...');
 
         if (! empty($this->conflicts)) {
             $this->reportConflictsApplied();
@@ -190,12 +190,12 @@ class UpdateCommand extends BaseCommand
         $zipPath = $this->tmpPath . "/$label.zip";
 
         spin(
-            fn() => Http::withoutVerifying()->timeout(0)->sink($zipPath)->get($url),
+            fn () => Http::withoutVerifying()->timeout(0)->sink($zipPath)->get($url),
             "Downloading $label snapshot...",
         );
 
         spin(
-            fn() => $this->unarchive($zipPath, $destination),
+            fn () => $this->unarchive($zipPath, $destination),
             "Unarchiving $label snapshot...",
         );
     }
@@ -251,7 +251,16 @@ class UpdateCommand extends BaseCommand
      */
     protected function mergeRemoved(string $relative, string $ours, string $basefile): void
     {
-        $unchanged = ! File::exists($ours) || File::hash($ours) === File::hash($basefile);
+        $oursExists = File::exists($ours);
+        $baseExists = File::exists($basefile);
+
+        // A file listed as removed should normally exist in the base snapshot,
+        // but exported archives can omit files (for example via export-ignore).
+        // Never try to hash a missing path. When the local file still exists and
+        // there is no base to compare it with, preserve it as a conflict rather
+        // than risking deletion of local changes.
+        $unchanged = ! $oursExists
+            || ($baseExists && File::hash($ours) === File::hash($basefile));
 
         if ($unchanged) {
             $this->deletes[] = $relative;
