@@ -356,7 +356,11 @@ class UpdateCommand extends BaseCommand
      */
     protected function threeWayMerge(string $relative, string $ours, string $basefile, string $theirs, string $staged, string $status): void
     {
-        $result = Process::run(['git', 'merge-file', '-p', '--marker-size=7', $ours, $basefile, $theirs]);
+        $result = Process::run([
+            'git', 'merge-file', '-p', '--marker-size=7',
+            '-L', 'Current', '-L', 'Base', '-L', 'Incoming',
+            $ours, $basefile, $theirs,
+        ]);
 
         // git merge-file refuses binary inputs; an empty stdout with a non-zero exit signals failure.
         if ($result->output() === '' && $result->exitCode() !== 0) {
