@@ -65,6 +65,15 @@ php artisan redot:update
 
 This command performs a **git-style 3-way merge**. It downloads two scaffold snapshots — your current commit (the "base") and the latest (the "incoming") — and merges each changed file against the version in your project using `git merge-file`. Files you have not touched update cleanly; files you have customized are merged with your changes preserved when possible.
 
+To merge a specific scaffold commit instead of the latest version, pass `--commit` with a 7–40 character hexadecimal hash. This also works with `--dry`:
+
+```bash
+php artisan redot:update --commit=abc1234
+php artisan redot:update --commit=abc1234 --dry
+```
+
+The base remains your project's recorded scaffold commit; the incoming snapshot and file diff use the requested commit.
+
 **Default behavior**
 
 By default the merge is applied to your project. When a file conflicts, the incoming changes are written with conflict markers in place (the same `<<<<<<<` / `=======` / `>>>>>>>` markers `git merge` produces). Open each conflicted file, resolve the markers, and commit. **You do not need to re-run `redot:update` afterwards** — the merge is already applied.

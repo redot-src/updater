@@ -18,13 +18,14 @@ class UpdateCommand extends BaseCommand
      */
     protected $signature = '
         redot:update
+        {--commit= : Update to a specific commit hash}
         {--dry : Preview the merge plan without modifying any files}
     ';
 
     /**
      * The console command description.
      */
-    protected $description = 'Update this project codebase to the latest redot dashboard version';
+    protected $description = 'Update this project codebase to the latest redot dashboard version or a specific commit';
 
     /**
      * Pending file writes: relative path => absolute path inside the staging dir.
@@ -68,7 +69,7 @@ class UpdateCommand extends BaseCommand
     protected string $basefilesPath;
 
     /**
-     * Extracted latest snapshot (HEAD).
+     * Extracted incoming snapshot (HEAD or the requested commit).
      */
     protected string $theirsPath;
 
@@ -92,8 +93,8 @@ class UpdateCommand extends BaseCommand
         $this->initialisePaths();
 
         $baseDownload = $this->fetchDownloadUrl();
-        $latestDownload = $this->fetchDownloadUrl('HEAD');
-        $diff = $this->fetchDiff();
+        $latestDownload = $this->fetchDownloadUrl($this->option('commit') ?? 'HEAD');
+        $diff = $this->fetchDiff($this->option('commit'));
 
         if ($baseDownload === null || $latestDownload === null || $diff === null) {
             return 1;
@@ -150,7 +151,7 @@ class UpdateCommand extends BaseCommand
         $url = "$this->endpoint/projects/$this->project/download";
 
         if ($commit !== null) {
-            $url .= "?commit=$commit";
+            $url .= '?' . http_build_query(['commit' => $commit]);
         }
 
         $response = $this->createHttpClient()->get($url);
@@ -169,9 +170,12 @@ class UpdateCommand extends BaseCommand
      *
      * @return array<string,mixed>|null
      */
-    protected function fetchDiff(): ?array
+    protected function fetchDiff(?string $commit = null): ?array
     {
-        $response = $this->createHttpClient()->get("$this->endpoint/projects/$this->project/diff");
+        $response = $this->createHttpClient()->get(
+            "$this->endpoint/projects/$this->project/diff",
+            $commit !== null ? ['commit' => $commit] : [],
+        );
 
         if ($response->failed()) {
             error($response->json('message'));
