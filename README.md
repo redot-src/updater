@@ -25,7 +25,7 @@ The package will automatically register its service provider via Laravel's packa
 
 ## Usage
 
-The package provides four main commands to manage your Redot dashboard:
+The package provides five main commands to manage your Redot dashboard:
 
 ### 1. Login to Redot
 
@@ -102,6 +102,19 @@ This step is best-effort: if the project is not a git repository (or a git comma
 **Commit Changes**
 
 Even with the 3-way merge in place, it is still good practice to commit (or stash) your local changes before running the update command, so you can review the resulting diff and roll back if needed.
+
+### 5. Bump Project Version
+
+Update the project's recorded scaffold version without modifying local files:
+
+```bash
+php artisan redot:bump
+php artisan redot:bump --stable
+php artisan redot:bump --beta
+php artisan redot:bump --commit=abc1234
+```
+
+By default, this uses the latest commit on the project's current branch. Use `--commit` to select a specific scaffold commit using a 7–40 character hexadecimal hash. The API resolves abbreviated hashes to the full commit hash. A supplied commit takes precedence over `--stable` or `--beta`; those two release flags cannot be used together.
 
 ## Limitations
 

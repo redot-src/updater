@@ -12,6 +12,7 @@ class BumpCommand extends BaseCommand
      */
     protected $signature = '
         redot:bump
+        {--commit= : Bump to a specific commit hash}
         {--stable : Bump to the latest stable release}
         {--beta : Bump to the latest beta release}
     ';
@@ -19,7 +20,7 @@ class BumpCommand extends BaseCommand
     /**
      * The console command description.
      */
-    protected $description = 'Bump this project to the latest redot dashboard version';
+    protected $description = 'Bump this project to the latest redot dashboard version or a specific commit';
 
     /**
      * Handle the command.
@@ -39,6 +40,7 @@ class BumpCommand extends BaseCommand
         }
 
         $query = match (true) {
+            $this->option('commit') !== null => ['commit' => $this->option('commit')],
             (bool) $this->option('beta') => ['beta' => true],
             (bool) $this->option('stable') => ['stable' => true],
             default => [],
