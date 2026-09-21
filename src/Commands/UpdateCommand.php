@@ -6,6 +6,7 @@ use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Process;
 
+use function Laravel\Prompts\confirm;
 use function Laravel\Prompts\error;
 use function Laravel\Prompts\info;
 use function Laravel\Prompts\spin;
@@ -26,6 +27,11 @@ class UpdateCommand extends BaseCommand
      * The console command description.
      */
     protected $description = 'Update this project codebase to the latest redot dashboard version or a specific commit';
+
+    /**
+     * The resolved commit being applied by this update.
+     */
+    protected string $commit;
 
     /**
      * Pending file writes: relative path => absolute path inside the staging dir.
@@ -93,10 +99,16 @@ class UpdateCommand extends BaseCommand
         $this->initialisePaths();
 
         $baseDownload = $this->fetchDownloadUrl();
-        $latestDownload = $this->fetchDownloadUrl($this->option('commit') ?? 'HEAD');
         $diff = $this->fetchDiff($this->option('commit'));
 
-        if ($baseDownload === null || $latestDownload === null || $diff === null) {
+        if ($baseDownload === null || $diff === null) {
+            return 1;
+        }
+
+        $this->commit = $diff['head_commit'];
+        $latestDownload = $this->fetchDownloadUrl($this->commit);
+
+        if ($latestDownload === null) {
             return 1;
         }
 
@@ -119,13 +131,22 @@ class UpdateCommand extends BaseCommand
 
         if (! empty($this->conflicts)) {
             $this->reportConflictsApplied();
+        } else {
+            info('Dashboard updated successfully');
+        }
 
+        $bump = confirm(
+            empty($this->conflicts)
+                ? "Bump the project to {$this->commit} now?"
+                : "Resolve the merge conflicts, then select Yes to bump the project to {$this->commit}.",
+            default: false,
+        );
+
+        if ($bump && $this->call('redot:bump', ['--commit' => $this->commit]) !== 0) {
             return 1;
         }
 
-        info('Dashboard updated successfully');
-
-        return 0;
+        return empty($this->conflicts) ? 0 : 1;
     }
 
     /**
