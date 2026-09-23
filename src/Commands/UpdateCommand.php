@@ -105,7 +105,7 @@ class UpdateCommand extends BaseCommand
             return 1;
         }
 
-        $this->commit = $diff['head_commit'];
+        $this->commit = $diff['commits'][array_key_last($diff['commits'])]['sha'];
         $latestDownload = $this->fetchDownloadUrl($this->commit);
 
         if ($latestDownload === null) {
