@@ -45,7 +45,7 @@ class LoginCommand extends BaseCommand
         }
 
         $projects = $projects->mapWithKeys(fn ($project) => [$project['slug'] => $project['name']])->toArray();
-        $this->project = select('Select a project', $projects, required: true);
+        $this->project = count($projects) === 1 ? array_key_first($projects) : select('Select a project', $projects, required: true);
 
         $this->saveCredentials();
 

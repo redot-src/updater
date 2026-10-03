@@ -35,7 +35,7 @@ Authenticate using your Redot access token and select a project:
 php artisan redot:login
 ```
 
-This command prompts for your access token (with hidden input), fetches your active projects, and lets you select a project. The token is stored encrypted alongside the selected project slug for subsequent operations.
+This command prompts for your access token (with hidden input) and fetches your active projects. If you have one active project, it is selected automatically; if you have multiple, you are prompted to select one. The token is stored encrypted alongside the selected project slug for subsequent operations.
 
 ### 2. Logout
 
