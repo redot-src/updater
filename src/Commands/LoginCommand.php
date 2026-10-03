@@ -6,7 +6,6 @@ use function Laravel\Prompts\error;
 use function Laravel\Prompts\info;
 use function Laravel\Prompts\password;
 use function Laravel\Prompts\select;
-use function Laravel\Prompts\text;
 
 class LoginCommand extends BaseCommand
 {
@@ -18,30 +17,16 @@ class LoginCommand extends BaseCommand
     /**
      * The console command description.
      */
-    protected $description = 'Login to redot.dev to grab the API key';
+    protected $description = 'Login to redot.dev using an access token';
 
     /**
      * Handle the command
      */
     public function handle()
     {
-        $email = text('Enter your email address', required: true, placeholder: 'john@doe.com', validate: fn ($value) => filter_var($value, FILTER_VALIDATE_EMAIL) ? null : 'Invalid email address');
-        $password = password('Enter your password', required: true, placeholder: '********', validate: fn ($value) => strlen($value) >= 8 ? null : 'Password must be at least 8 characters long');
+        $this->token = trim(password('Enter your access token', required: true));
 
-        $response = $this->createHttpClient()->post("$this->endpoint/login", [
-            'email' => $email,
-            'password' => $password,
-        ]);
-
-        if ($response->failed()) {
-            error($response->json('message'));
-
-            return;
-        }
-
-        $this->token = $response->json('payload.token');
-
-        info('Logged in successfully, fetching projects...');
+        info('Fetching projects...');
 
         $response = $this->createHttpClient()->withToken($this->token)->get("$this->endpoint/projects");
 

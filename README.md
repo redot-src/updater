@@ -29,13 +29,13 @@ The package provides five main commands to manage your Redot dashboard:
 
 ### 1. Login to Redot
 
-Authenticate with your Redot account and get your project token and slug:
+Authenticate using your Redot access token and select a project:
 
 ```bash
 php artisan redot:login
 ```
 
-This command will prompt you for your credentials and store the necessary authentication tokens for subsequent operations.
+This command prompts for your access token (with hidden input), fetches your active projects, and lets you select a project. The token is stored encrypted alongside the selected project slug for subsequent operations.
 
 ### 2. Logout
 
