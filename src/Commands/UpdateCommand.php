@@ -3,7 +3,6 @@
 namespace Redot\Updater\Commands;
 
 use Illuminate\Support\Facades\File;
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Str;
 
@@ -235,7 +234,7 @@ class UpdateCommand extends BaseCommand
         $zipPath = $this->tmpPath . "/$label.zip";
 
         spin(
-            fn () => Http::timeout(0)->connectTimeout(0)->sink($zipPath)->get($url),
+            fn () => $this->createBaseHttpClient()->sink($zipPath)->get($url),
             "Downloading $label snapshot...",
         );
 

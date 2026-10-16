@@ -2,11 +2,18 @@
 
 namespace Redot\Updater\Commands;
 
+use Composer\CaBundle\CaBundle;
 use Illuminate\Console\Command;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Http;
+use Symfony\Component\Console\Input\InputInterface;
+use Symfony\Component\Console\Output\OutputInterface;
 use ZipArchive;
+
+use function Laravel\Prompts\error;
+use function Laravel\Prompts\warning;
 
 abstract class BaseCommand extends Command
 {
@@ -40,6 +47,47 @@ abstract class BaseCommand extends Command
         $this->basePath = base_path('.redot');
 
         $this->loadCredentials();
+    }
+
+    /**
+     * Execute the command, turning TLS certificate failures into actionable
+     * guidance instead of a raw cURL stack trace.
+     */
+    protected function execute(InputInterface $input, OutputInterface $output): int
+    {
+        try {
+            return parent::execute($input, $output);
+        } catch (ConnectionException $e) {
+            if (! preg_match('/cURL error (60|77)\b/', $e->getMessage())) {
+                throw $e;
+            }
+
+            $this->reportCertificateError($e);
+
+            return 1;
+        }
+    }
+
+    /**
+     * Explain a failed TLS certificate check and how to fix it.
+     */
+    protected function reportCertificateError(ConnectionException $e): void
+    {
+        error('Could not verify the SSL certificate of the Redot server.');
+        $this->line($e->getMessage());
+        $this->newLine();
+
+        warning('This usually means a proxy, VPN or antivirus is inspecting HTTPS traffic with its own root certificate,');
+        warning('or the CA file configured in php.ini is missing or unreadable.');
+        $this->newLine();
+
+        $this->line('To fix it:');
+        $this->line('  1. Get your network\'s root certificate (ask your IT team, or export it from your antivirus) and');
+        $this->line('     append it to a CA bundle file, e.g. https://curl.se/ca/cacert.pem.');
+        $this->line('  2. Run `php --ini` to find your php.ini and set both options to that file:');
+        $this->line('       curl.cainfo = "C:\\php\\cacert.pem"');
+        $this->line('       openssl.cafile = "C:\\php\\cacert.pem"');
+        $this->line('  3. Re-run the command. Certificate verification protects your access token; do not disable it.');
     }
 
     /**
@@ -90,11 +138,22 @@ abstract class BaseCommand extends Command
     }
 
     /**
-     * Create a ready HTTP Client.
+     * Create an HTTP client that verifies TLS certificates. Falls back to a
+     * bundled CA list when PHP has none configured (common on Windows).
+     */
+    protected function createBaseHttpClient(): PendingRequest
+    {
+        return Http::withOptions(['verify' => CaBundle::getSystemCaRootBundlePath()])
+            ->timeout(0)
+            ->connectTimeout(0);
+    }
+
+    /**
+     * Create a ready HTTP Client for the Redot API.
      */
     protected function createHttpClient(): PendingRequest
     {
-        $client = Http::timeout(0)->connectTimeout(0);
+        $client = $this->createBaseHttpClient();
 
         if ($this->hasCredentials()) {
             $client->withToken($this->token);
