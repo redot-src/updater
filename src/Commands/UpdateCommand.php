@@ -215,7 +215,7 @@ class UpdateCommand extends BaseCommand
         $zipPath = $this->tmpPath . "/$label.zip";
 
         spin(
-            fn () => Http::withoutVerifying()->timeout(0)->sink($zipPath)->get($url),
+            fn () => Http::withoutVerifying()->timeout(0)->connectTimeout(0)->sink($zipPath)->get($url),
             "Downloading $label snapshot...",
         );
 

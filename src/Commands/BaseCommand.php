@@ -94,7 +94,7 @@ abstract class BaseCommand extends Command
      */
     protected function createHttpClient(): PendingRequest
     {
-        $client = Http::withoutVerifying();
+        $client = Http::withoutVerifying()->timeout(0)->connectTimeout(0);
 
         if ($this->hasCredentials()) {
             $client->withToken($this->token);
