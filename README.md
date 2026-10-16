@@ -112,6 +112,19 @@ This step is best-effort: if the project is not a git repository (or a git comma
 
 Even with the 3-way merge in place, it is still good practice to commit (or stash) your local changes before running the update command, so you can review the resulting diff and roll back if needed.
 
+**Ignored files**
+
+Some files are never touched by an update: `.github/*`, `AGENTS.md`, `CHANGELOG.md`, `LICENSE*`, `README.md` and `composer.lock`. `composer.json` is merged as usual; when it changes, run `composer update` to refresh `composer.lock`.
+
+Customize the list from a service provider's `boot` method (wildcards are supported):
+
+```php
+use Redot\Updater\Commands\UpdateCommand;
+
+UpdateCommand::$ignore[] = '.env.example';      // add to the defaults
+UpdateCommand::$ignore = ['composer.lock'];      // or replace them
+```
+
 ### 5. Bump Project Version
 
 Update the project's recorded scaffold version without modifying local files:

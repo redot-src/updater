@@ -5,6 +5,7 @@ namespace Redot\Updater\Commands;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Process;
+use Illuminate\Support\Str;
 
 use function Laravel\Prompts\confirm;
 use function Laravel\Prompts\error;
@@ -27,6 +28,22 @@ class UpdateCommand extends BaseCommand
      * The console command description.
      */
     protected $description = 'Update this project codebase to the latest redot dashboard version or a specific commit';
+
+    /**
+     * Project-relative paths (wildcards allowed) that are never touched by an
+     * update. composer.lock is skipped because a text merge of it is unreliable;
+     * composer.json is merged instead and the user is asked to run composer update.
+     *
+     * @var array<int,string>
+     */
+    public static array $ignore = [
+        '.github/*',
+        'AGENTS.md',
+        'CHANGELOG.md',
+        'LICENSE*',
+        'README.md',
+        'composer.lock',
+    ];
 
     /**
      * The resolved commit being applied by this update.
@@ -121,6 +138,7 @@ class UpdateCommand extends BaseCommand
 
         if ((bool) $this->option('dry')) {
             $this->reportDryRun();
+            $this->reportComposerChanges();
             spin(fn () => $this->clean(), 'Cleaning up...');
 
             return empty($this->conflicts) ? 0 : 1;
@@ -134,6 +152,8 @@ class UpdateCommand extends BaseCommand
         } else {
             info('Dashboard updated successfully');
         }
+
+        $this->reportComposerChanges();
 
         $bump = confirm(
             empty($this->conflicts)
@@ -215,7 +235,7 @@ class UpdateCommand extends BaseCommand
         $zipPath = $this->tmpPath . "/$label.zip";
 
         spin(
-            fn () => Http::withoutVerifying()->timeout(0)->connectTimeout(0)->sink($zipPath)->get($url),
+            fn () => Http::timeout(0)->connectTimeout(0)->sink($zipPath)->get($url),
             "Downloading $label snapshot...",
         );
 
@@ -233,8 +253,7 @@ class UpdateCommand extends BaseCommand
      */
     protected function mergeFile(array $file): void
     {
-        // Skip github files
-        if (str_starts_with($file['filename'], '.github')) {
+        if (Str::is(static::$ignore, $file['filename'])) {
             return;
         }
 
@@ -544,6 +563,19 @@ class UpdateCommand extends BaseCommand
 
         warning('Open each file, resolve the <<<<<<< markers, and commit. No need to re-run.');
         warning('In a git project these appear under "Merge Changes" in your editor for guided resolution.');
+    }
+
+    /**
+     * Ask the user to refresh composer.lock when composer.json was changed,
+     * since composer.lock itself is never merged.
+     */
+    protected function reportComposerChanges(): void
+    {
+        if (! array_key_exists('composer.json', $this->writes)) {
+            return;
+        }
+
+        warning('composer.json was updated. Run `composer update` to refresh composer.lock and vendor/.');
     }
 
     /**
