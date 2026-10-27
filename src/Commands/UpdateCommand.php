@@ -131,7 +131,7 @@ class UpdateCommand extends BaseCommand
         $this->prepareSnapshot($baseDownload, 'base', $this->basefilesPath);
         $this->prepareSnapshot($latestDownload, 'latest', $this->theirsPath);
 
-        foreach ($diff['files'] as $file) {
+        foreach ($this->snapshotChanges() as $file) {
             $this->mergeFile($file);
         }
 
@@ -206,7 +206,7 @@ class UpdateCommand extends BaseCommand
     }
 
     /**
-     * Fetch the diff payload that drives the per-file merge plan.
+     * Fetch the diff payload, used to resolve the commit being applied.
      *
      * @return array<string,mixed>|null
      */
@@ -242,6 +242,71 @@ class UpdateCommand extends BaseCommand
             fn () => $this->unarchive($zipPath, $destination),
             "Unarchiving $label snapshot...",
         );
+    }
+
+    /**
+     * List the files that changed between the base and latest snapshots, in
+     * the shape of GitHub compare entries. The snapshots are compared directly
+     * because the GitHub compare API lists at most 300 files. A removed file
+     * that reappears elsewhere with the same name and content is a rename.
+     *
+     * @return array<int,array<string,string>>
+     */
+    protected function snapshotChanges(): array
+    {
+        $base = $this->snapshotHashes($this->basefilesPath);
+        $latest = $this->snapshotHashes($this->theirsPath);
+        $removed = array_diff_key($base, $latest);
+        $files = [];
+        $moves = [];
+
+        foreach ($removed as $relative => $hash) {
+            $moves[$hash . ':' . basename($relative)][] = $relative;
+        }
+
+        foreach ($latest as $relative => $hash) {
+            if (isset($base[$relative])) {
+                if ($base[$relative] !== $hash) {
+                    $files[] = ['filename' => $relative, 'status' => 'modified'];
+                }
+
+                continue;
+            }
+
+            $key = $hash . ':' . basename($relative);
+            $previous = isset($moves[$key]) ? array_shift($moves[$key]) : null;
+
+            if ($previous === null) {
+                $files[] = ['filename' => $relative, 'status' => 'added'];
+
+                continue;
+            }
+
+            unset($removed[$previous]);
+            $files[] = ['filename' => $relative, 'status' => 'renamed', 'previous_filename' => $previous];
+        }
+
+        foreach (array_keys($removed) as $relative) {
+            $files[] = ['filename' => $relative, 'status' => 'removed'];
+        }
+
+        return $files;
+    }
+
+    /**
+     * Hash every file in an extracted snapshot, keyed by its relative path.
+     *
+     * @return array<string,string>
+     */
+    protected function snapshotHashes(string $path): array
+    {
+        $hashes = [];
+
+        foreach (File::allFiles($path, true) as $file) {
+            $hashes[str_replace('\\', '/', $file->getRelativePathname())] = File::hash($file->getPathname());
+        }
+
+        return $hashes;
     }
 
     /**
