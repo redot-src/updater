@@ -111,13 +111,24 @@ class UpdateCommand extends BaseCommand
             return 1;
         }
 
+        $diff = $this->fetchDiff($this->option('commit'));
+
+        if ($diff === null) {
+            return 1;
+        }
+
+        if (($diff['status'] ?? null) === 'identical') {
+            info('Dashboard is already up to date.');
+
+            return 0;
+        }
+
         $this->clean();
         $this->initialisePaths();
 
         $baseDownload = $this->fetchDownloadUrl();
-        $diff = $this->fetchDiff($this->option('commit'));
 
-        if ($baseDownload === null || $diff === null) {
+        if ($baseDownload === null) {
             return 1;
         }
 
